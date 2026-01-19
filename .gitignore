@@ -15,3 +15,8 @@ cuda_libs.zip
 # IDE
 .vscode/
 .idea/
+
+# PyInstaller
+build/
+dist/
+*.spec
