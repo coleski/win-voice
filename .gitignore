@@ -1,0 +1,17 @@
+# CUDA DLLs (too large, installed via pip)
+*.dll
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+
+# Downloaded files
+cuda_libs.7z
+cuda_libs.zip
+
+# IDE
+.vscode/
+.idea/
