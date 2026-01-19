@@ -6,7 +6,6 @@ System tray app - click icon to open settings.
 import os
 import sys
 import json
-import queue
 
 # Get app directory (works for script and exe)
 if getattr(sys, 'frozen', False):
@@ -81,215 +80,6 @@ def create_icon(color):
     draw.line([22, 58, 42, 58], fill=c, width=3)
     return img
 
-# Sound file paths (using vibebuddy mp3 files)
-SOUNDS_DIR = os.path.join(APP_DIR, "sounds")
-SOUND_START = os.path.join(SOUNDS_DIR, "startRecording.mp3")
-SOUND_STOP = os.path.join(SOUNDS_DIR, "stopRecording.mp3")
-SOUND_PASTE = os.path.join(SOUNDS_DIR, "pasteTranscript.mp3")
-
-# Initialize pygame mixer for mp3 playback
-import pygame
-pygame.mixer.init()
-pygame.mixer.music.set_volume(0.3)  # 30% volume
-
-def play_sound(sound_path):
-    """Play a sound file asynchronously (non-blocking)"""
-    try:
-        if os.path.exists(sound_path):
-            pygame.mixer.music.load(sound_path)
-            pygame.mixer.music.play()
-        else:
-            print(f"Sound file not found: {sound_path}")
-    except Exception as e:
-        print(f"Sound error: {e}")
-
-class OverlayOrb:
-    """Floating orb overlay with smiley face that shows recording state"""
-
-    # Colors for different states
-    COLORS = {
-        'loading': '#FFD700',   # Yellow/gold
-        'ready': '#00C853',     # Green
-        'recording': '#FF1744', # Red
-        'processing': '#FFD700' # Yellow
-    }
-
-    def __init__(self):
-        self.root = None
-        self.canvas = None
-        self.state = 'loading'
-        self.eye_spread = 0  # Animation: how far eyes spread apart
-        self.pulse_scale = 1.0  # Animation: pulse scale
-        self.animation_running = False
-        self.command_queue = queue.Queue()  # Thread-safe command queue
-        self._setup_window()
-
-    def _setup_window(self):
-        """Create the overlay window"""
-        self.root = tk.Toplevel()
-        self.root.withdraw()  # Start hidden
-
-        # Window properties: borderless, always on top
-        self.root.overrideredirect(True)
-        self.root.attributes('-topmost', True)
-
-        # Use a specific color for transparency (magenta is common)
-        self.transparent_color = '#010101'  # Near-black
-        self.root.attributes('-transparentcolor', self.transparent_color)
-
-        # Prevent showing in taskbar (Windows-specific)
-        self.root.attributes('-toolwindow', True)
-
-        # Size and position (top center of screen, sleek orb)
-        size = 60  # Smaller, sleeker
-        screen_w = self.root.winfo_screenwidth()
-        x = (screen_w - size) // 2
-        y = 40  # Near top of screen
-        self.root.geometry(f"{size}x{size}+{x}+{y}")
-
-        # Canvas for drawing - use transparent color as background
-        self.canvas = tk.Canvas(self.root, width=size, height=size,
-                                bg=self.transparent_color, highlightthickness=0)
-        self.canvas.pack()
-        print(f"Overlay window created at {x},{y}")
-
-    def _draw_face(self):
-        """Draw the smiley face based on current state"""
-        self.canvas.delete('all')
-
-        size = 60  # Match window size
-        center = size // 2
-        color = self.COLORS.get(self.state, self.COLORS['loading'])
-
-        # Apply pulse scale for recording animation
-        radius = int(25 * self.pulse_scale)
-
-        # Main face circle
-        self.canvas.create_oval(
-            center - radius, center - radius,
-            center + radius, center + radius,
-            fill=color, outline=''
-        )
-
-        # Eye parameters (scaled for 60px)
-        eye_y = center - 5
-        base_eye_x = 8
-        eye_spread = base_eye_x + int(self.eye_spread * 0.6)
-        eye_size = 4
-
-        # Left eye
-        self.canvas.create_oval(
-            center - eye_spread - eye_size, eye_y - eye_size,
-            center - eye_spread + eye_size, eye_y + eye_size,
-            fill='black', outline=''
-        )
-
-        # Right eye
-        self.canvas.create_oval(
-            center + eye_spread - eye_size, eye_y - eye_size,
-            center + eye_spread + eye_size, eye_y + eye_size,
-            fill='black', outline=''
-        )
-
-        # Mouth based on state (scaled for 60px)
-        mouth_y = center + 6
-        if self.state == 'recording':
-            # Open mouth (recording) - "O" shape
-            self.canvas.create_oval(
-                center - 5, mouth_y - 4,
-                center + 5, mouth_y + 5,
-                fill='black', outline=''
-            )
-        elif self.state == 'processing':
-            # Thinking mouth - small line
-            self.canvas.create_line(
-                center - 5, mouth_y + 1,
-                center + 5, mouth_y + 1,
-                fill='black', width=2
-            )
-        else:
-            # Happy smile arc
-            self.canvas.create_arc(
-                center - 10, mouth_y - 8,
-                center + 10, mouth_y + 8,
-                start=200, extent=140,
-                style='arc', outline='black', width=2
-            )
-
-    def set_state(self, state):
-        """Queue state change (thread-safe)"""
-        self.command_queue.put(('set_state', state))
-
-    def show(self):
-        """Queue show command (thread-safe)"""
-        self.command_queue.put(('show', None))
-
-    def hide(self):
-        """Queue hide command (thread-safe)"""
-        self.command_queue.put(('hide', None))
-
-    def process_commands(self):
-        """Process queued commands - call from main thread"""
-        try:
-            while True:
-                cmd, arg = self.command_queue.get_nowait()
-                if cmd == 'set_state':
-                    self._do_set_state(arg)
-                elif cmd == 'show':
-                    self._do_show()
-                elif cmd == 'hide':
-                    self._do_hide()
-        except queue.Empty:
-            pass
-
-    def _do_set_state(self, state):
-        """Actually update state (main thread only)"""
-        self.state = state
-        if state == 'recording':
-            self.eye_spread = 6
-            self.animation_running = True
-            self._animate_pulse(True)
-        else:
-            self.eye_spread = 0
-            self.pulse_scale = 1.0
-            self.animation_running = False
-            self._draw_face()
-
-    def _do_show(self):
-        """Actually show overlay (main thread only)"""
-        print("Overlay _do_show called")
-        self._draw_face()
-        self.root.deiconify()
-        self.root.lift()
-        self.root.attributes('-topmost', True)  # Ensure on top
-        print(f"Overlay visible, geometry: {self.root.geometry()}")
-
-    def _do_hide(self):
-        """Actually hide overlay (main thread only)"""
-        self.animation_running = False
-        self.root.withdraw()
-
-    def _animate_pulse(self, growing=True):
-        """Animate pulse effect (main thread only)"""
-        if not self.animation_running or self.state != 'recording':
-            self.pulse_scale = 1.0
-            self._draw_face()
-            return
-
-        if growing:
-            self.pulse_scale += 0.01
-            if self.pulse_scale >= 1.05:
-                growing = False
-        else:
-            self.pulse_scale -= 0.01
-            if self.pulse_scale <= 0.95:
-                growing = True
-
-        self._draw_face()
-
-        if self.root and self.animation_running:
-            self.root.after(50, lambda: self._animate_pulse(growing))
-
 class WinVoice:
     def __init__(self):
         self.config = load_config()
@@ -301,7 +91,6 @@ class WinVoice:
         self.tray = None
         self.key_pressed = False
         self.running = True
-        self.overlay = None  # Initialized after tkinter root exists
 
     def get_vk_code(self):
         return VK_CODES.get(self.config['hotkey'], 0x12)
@@ -326,13 +115,6 @@ class WinVoice:
         self.audio_data = []
         if self.tray:
             self.tray.icon = create_icon("red")
-        # Show overlay and play start sound
-        print(f"Overlay exists: {self.overlay is not None}")
-        if self.overlay:
-            print("Setting overlay state to recording and showing...")
-            self.overlay.set_state('recording')
-            self.overlay.show()
-        play_sound(SOUND_START)
         print("Recording...")
 
     def stop_recording(self):
@@ -345,19 +127,12 @@ class WinVoice:
         if self.tray:
             self.tray.icon = create_icon("yellow")
 
-        # Play stop sound and set overlay to processing
-        play_sound(SOUND_STOP)
-        if self.overlay:
-            self.overlay.set_state('processing')
-
         total = sum(len(a) for a in audio_data)
         print(f"Audio samples: {total} ({total/SAMPLE_RATE:.2f}s)")
         if total < int(SAMPLE_RATE * 0.1):
             print("Too short, skipping")
             if self.tray:
                 self.tray.icon = create_icon("green")
-            if self.overlay:
-                self.overlay.hide()
             return
 
         self.processing = True
@@ -372,8 +147,6 @@ class WinVoice:
             self.processing = False
             if self.tray:
                 self.tray.icon = create_icon("green")
-            if self.overlay:
-                self.overlay.hide()
             return
 
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
@@ -381,7 +154,6 @@ class WinVoice:
             wav.write(temp_path, SAMPLE_RATE, audio)
         print(f"Saved to {temp_path}")
 
-        pasted = False
         try:
             lang = self.config['language'] if self.config['language'] != 'auto' else None
             print(f"Calling model.transcribe(lang={lang})...")
@@ -393,8 +165,6 @@ class WinVoice:
                 pyperclip.copy(text)
                 time.sleep(0.05)
                 pyautogui.hotkey('ctrl', 'v')
-                pasted = True
-                play_sound(SOUND_PASTE)
         except Exception as e:
             print(f"Transcribe error: {e}")
             import traceback
@@ -406,12 +176,6 @@ class WinVoice:
         self.processing = False
         if self.tray:
             self.tray.icon = create_icon("green")
-        # Hide overlay after brief delay to show success
-        if self.overlay:
-            if pasted:
-                # Brief delay to let user see success state
-                time.sleep(0.3)
-            self.overlay.hide()
 
     def key_poll_loop(self):
         """Poll for hotkey state using GetAsyncKeyState"""
@@ -489,13 +253,6 @@ class WinVoice:
         os._exit(0)
 
     def run(self):
-        # Create tkinter root for overlay (main thread)
-        self.tk_root = tk.Tk()
-        self.tk_root.withdraw()
-
-        # Create overlay orb
-        self.overlay = OverlayOrb()
-
         # Start audio
         self.stream = sd.InputStream(device=self.config['microphone'], samplerate=SAMPLE_RATE,
                                       channels=1, dtype=np.float32, callback=self.audio_callback)
@@ -525,21 +282,7 @@ class WinVoice:
                 icon.icon = create_icon("green")
             threading.Thread(target=wait_for_model, daemon=True).start()
 
-        # Run tray in background thread so tkinter can use main thread
-        threading.Thread(target=lambda: self.tray.run(on_tray_ready), daemon=True).start()
-
-        # Run tkinter main loop on main thread
-        def tk_mainloop():
-            while self.running:
-                try:
-                    # Process overlay commands from other threads
-                    if self.overlay:
-                        self.overlay.process_commands()
-                    self.tk_root.update()
-                    time.sleep(0.01)  # 100fps update rate
-                except tk.TclError:
-                    break
-        tk_mainloop()
+        self.tray.run(on_tray_ready)
 
 if __name__ == "__main__":
     save_config(load_config())  # Ensure config exists
